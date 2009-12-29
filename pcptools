@@ -1,0 +1,497 @@
+#!/usr/bin/ruby -w
+
+# Marcel Borsten, 2009
+# Impart IT
+# The software is provided by Impart on an "AS IS" basis. 
+# IMPART MAKES NO WARRANTIES, EXPRESS OR IMPLIED, INCLUDING WITHOUT 
+# LIMITATION THE IMPLIED WARRANTIES OF NON-INFRINGEMENT, MERCHANTABILITY 
+# AND FITNESS FOR A PARTICULAR PURPOSE, REGARDING THE SOFTWARE OR ITS USE 
+# AND OPERATION ALONE OR IN COMBINATION WITH YOUR PRODUCTS.
+# 
+# IN NO EVENT SHALL IMPART BE LIABLE FOR ANY SPECIAL, INDIRECT, 
+# INCIDENTAL OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, 
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR 
+# PROFITS; OR BUSINESS INTERRUPTION) ARISING IN ANY WAY OUT OF THE USE,
+# REPRODUCTION, MODIFICATION AND/OR DISTRIBUTION OF THE SOFTWARE,
+# HOWEVER CAUSED AND WHETHER UNDER THEORY OF CONTRACT, TORT (INCLUDING
+# NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, EVEN IF IMPART HAS
+# BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+require 'rubygems'
+require 'getoptlong'
+require 'yaml'
+require 'osx/cocoa'
+require 'tmpdir'
+require 'digest/md5'
+require 'net/http'
+require 'net/https'
+require 'cgi'
+require 'rexml/document'
+
+YOUTUBE_BASE_URL = "http://www.youtube.com/watch?v="
+
+class Publish2YouTube
+
+  def self.print_usage
+      $stderr.puts " "
+      $stderr.puts "pcptools publish2youtube --basedir=BASEDIR --input=INPUT MOVIE --dev_id=YOUTUBE_DEVELOPER_ID --user=YOUTUBE_USERNAME"
+      $stderr.puts "                         --pass=YOUTUBE_PASSWORD --title=TITLE --description=DESCRIPTION --keywords=KEYWORDS"
+      $stderr.puts "                         --category=YOUTUBE_CATEGORY [--autosplit]"
+      $stderr.puts " "
+      $stderr.puts "KEYWORDS should be a string of keywords separated by ','"
+      $stderr.puts " "
+      $stderr.puts "CATEGORY should by one of the valid YouTube categories"
+      $stderr.puts ""
+      $stderr.puts "--autosplit"
+      $stderr.puts "When you use this option the input video will be split into 10 minute chunks,"
+      $stderr.puts "if it is more than 10 minutes long. The chunks will be uploaded separatly and named"
+      $stderr.puts "sequentially."
+      $stderr.puts ""
+      $stderr.puts ""
+  end
+    
+  def run(arguments)
+        
+      autosplit = arguments["autosplit"] || false
+      basedir = arguments["basedir"]
+      outfile = arguments["outfile"]
+      input = arguments["input"]
+      dev_id = arguments["dev_id"]
+      user = arguments["user"]
+      password = arguments["password"]
+      title = arguments["title"]
+      description = arguments["description"]
+      keywords = arguments["keywords"].split(",")
+      arguments["keywords"] = keywords
+      category = arguments["category"]
+      
+      if (basedir == nil)
+        $stderr.puts "Error --basedir missing"
+        self.print_usage
+        exit(-1)
+      end
+      
+      if input.nil?
+        $stderr.puts "Error --input missing"
+        Publish2YouTube.print_usage
+        exit(-1)
+      end
+  
+      if dev_id.nil?
+        $stderr.puts "Error --dev_id missing"
+        self.print_usage
+        exit(-1)
+      end
+  
+      if user.nil?
+       $stderr.puts "Error --user missing"
+       self.print_usage
+       exit(-1)
+      end
+  
+      if password.nil?
+        $stderr.puts "Error --password missing"
+        self.print_usage
+        exit(-1)
+      end
+  
+      if title.nil?
+        $stderr.puts "Error --title missing"
+        exit 1
+      end
+  
+      if description.nil?
+        $stderr.puts "Error --description missing"
+        self.print_usage
+        exit(-1)
+      end
+  
+      if keywords.nil?
+        $stderr.puts "Error --keywords missing"
+        self.print_usage
+        exit(-1)
+      end
+  
+      if category.nil?
+        $stderr.puts "Error --category missing"
+        self.print_usage
+        exit(-1)
+      end
+      
+      input_file_path = basedir + "/" + input
+      
+      if(!File.exists?(input_file_path) || File.directory?(input_file_path))
+        $stderr.puts "Error: input file does not exist"
+        exit(-1)
+      end
+      
+      upload_files = Array.new
+      uploaded_files = Array.new
+      
+      if(autosplit == true)
+        upload_files = split_movie(input_file_path)
+        include_part_in_name = true
+      else
+        upload_files[0] = input_file_path
+      end
+      
+      upload_files.each_with_index do |path, i|
+        if(include_part_in_name == true)
+          number = i + 1
+          arguments["upload_title"] = "#{arguments['title']} (Part #{number.to_s})"
+        end
+        uploaded_files.push(upload_movie(path, arguments))  
+      end
+      
+      if outfile != nil
+        write_outfile(outfile, uploaded_files)
+      end
+      
+      if(autosplit == true && upload_files.count > 1)
+        upload_files.each do |file|
+          File.delete(file)
+      end
+    end
+  end
+  
+  def upload_movie(file_path, arguments)
+      
+    if(File.exists?(file_path) && !File.directory?(file_path))
+        file = File.open(file_path)
+    else
+        $stderr.puts "Error: input file does not exist"
+        exit(-1)
+    end  
+    @user = $user
+    @pass = $password
+    @dev_key = $dev_id
+    @client_id = "pcptools"
+    response = upload(file, :title => arguments["upload_title"], :description => arguments["description"], :keywords => arguments["keywords"], :category => arguments["category"])
+    url = YOUTUBE_BASE_URL + response
+    uploaded_file = {:file => file_path, :url => url, :title => arguments["title"]}
+  end
+    
+  def split_movie(file_path)
+    OSX.require_framework("QTKit")
+    splitted_files = Array.new
+    
+    movie, error = OSX::QTMovie.movieWithFile_error(file_path)
+    if(error != nil || movie == nil)
+      $stderr.puts "Could not open #{file_path}, #{error.localizedDescription}"
+      exit(-1)
+    end
+    
+    time_scale = movie.duration.timeScale
+    total_time = (movie.duration.timeValue / time_scale) / 60
+    
+    if(total_time < 10)
+      splitted_files.push(file_path)
+      return splitted_files
+    end
+       
+    parts = total_time.to_i / 10
+    
+    if(total_time.modulo(10) != 0)
+      parts = parts + 1
+    end
+    
+    part_duration = OSX::QTMakeTime(600 * time_scale, time_scale)
+    temp_dir = Dir.tmpdir()
+    attributes = OSX::NSDictionary.dictionaryWithObjectsAndKeys("YES", "QTMovieFlatten", nil)
+    movies = Array.new
+    
+    parts.times do |i|
+      begin_time = OSX::QTMakeTime(i * 600 * time_scale, time_scale)
+      range = OSX::QTMakeTimeRange(begin_time, part_duration)
+      movie_part, error = movie.movieWithTimeRange_error(range)
+      
+      if(error != nil || movie_part == nil)
+        $stderr.puts "Could not generate subclip, #{error.localizedDescription}"
+        exit(-1)
+      end
+      
+      temp_file_path = temp_dir + "/" + File.basename(file_path, File.extname(file_path)) + "-" + i.to_s + ".mov"
+        movie_part.writeToFile_withAttributes(temp_file_path, attributes)
+        movies.push(temp_file_path)
+    end
+    return movies    
+  end
+  
+  def write_outfile(outfile_path, files, date=nil)
+    if outfile_path.empty?
+       $stderr.puts "Error, empty outfile path"
+       exit(-1)
+     elsif !File.writable?(File.dirname(outfile_path))
+       $stderr.puts "Error, could not write outfile. Folder not writeable"
+       exit(-1)
+     elsif files.count < 1
+       $stderr.puts "No files given for outfile"
+       exit(-1)
+     else
+       date ||= Time.now
+       publish_description =   {
+         :date => date
+       }
+       
+       publish_files = []
+       
+       files.each do |file|
+         path = file[:file]
+         movie = OSX::QTMovie.movieWithFile_error(path)
+         width = %x[/usr/libexec/podcastproducer/qtinfo #{path} width].strip
+         height = %x[/usr/libexec/podcastproducer/qtinfo #{path} height].strip
+         duration = %x[/usr/libexec/podcastproducer/qtinfo #{path} duration].strip
+         size = %x[/usr/libexec/podcastproducer/qtinfo #{path} size].strip
+         publish_file = {
+           :title => file[:title],
+           :url => file[:url],
+           :width => width,
+           :height => height,
+           :duration => duration
+           }
+         publish_files.push(publish_file)
+        end
+        publish_description[:files] = publish_files
+     end
+     File.open(outfile_path, "w") do |file|
+       file.puts publish_description.to_yaml
+     end
+   end
+   
+   def upload data, opts = {}
+     data = data.respond_to?(:read) ? data.read : data
+     @opts = { :mime_type => 'video/mp4',
+               :filename => Digest::MD5.hexdigest(data),
+               :title => '',
+               :description => '',
+               :category => '',
+               :keywords => [] }.merge(opts)
+
+     uploadBody = generate_upload_body(boundary, video_xml, data)
+
+     uploadHeader = {
+       "Authorization"  => "GoogleLogin auth=#{auth_token}",
+       "X-GData-Client" => "#{@client_id}",
+       "X-GData-Key"    => "key=#{@dev_key}",
+       "Slug"           => "#{@opts[:filename]}",
+       "Content-Type"   => "multipart/related; boundary=#{boundary}",
+       "Content-Length" => "#{uploadBody.length}"
+     }
+
+     Net::HTTP.start(base_url) do |upload|
+       response = upload.post('/feeds/api/users/' << @user << '/uploads', uploadBody, uploadHeader)
+       if response.code.to_i == 403
+         raise AuthenticationError, response.body[/<TITLE>(.+)<\/TITLE>/, 1]
+       elsif response.code.to_i != 201
+         upload_error = ''
+         xml = REXML::Document.new(response.body)
+         errors = xml.elements["//errors"]
+         errors.each do |error|
+           location = error.elements["location"].text[/media:group\/media:(.*)\/text\(\)/,1]
+           code = error.elements["code"].text
+           upload_error << sprintf("%s: %s\r\n", location, code)
+         end
+         raise UploadError, upload_error
+       end
+       xml = REXML::Document.new(response.body)
+       return xml.elements["//id"].text[/videos\/(.+)/, 1]
+     end
+
+   end
+   
+   def generate_upload_body(boundary, video_xml, data)
+     uploadBody = ""
+     uploadBody << "--#{boundary}\r\n"
+     uploadBody << "Content-Type: application/atom+xml; charset=UTF-8\r\n\r\n"
+     uploadBody << video_xml
+     uploadBody << "\r\n--#{boundary}\r\n"
+     uploadBody << "Content-Type: #{@opts[:mime_type]}\r\nContent-Transfer-Encoding: binary\r\n\r\n"
+     uploadBody << data
+     uploadBody << "\r\n--#{boundary}--\r\n"
+   end
+   
+   def video_xml
+     video_xml = ''
+     video_xml << '<?xml version="1.0"?>'
+     video_xml << '<entry xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:yt="http://gdata.youtube.com/schemas/2007">'
+     video_xml << '<media:group>'
+     video_xml << '<media:title type="plain">%s</media:title>'               % @opts[:title]
+     video_xml << '<media:description type="plain">%s</media:description>'   % @opts[:description]
+     video_xml << '<media:keywords>%s</media:keywords>'                      % @opts[:keywords].join(",")
+     video_xml << '<media:category scheme="http://gdata.youtube.com/schemas/2007/categories.cat">%s</media:category>' % @opts[:category]
+     video_xml << '<yt:private/>' if @opts[:private]
+     video_xml << '</media:group>'
+     video_xml << '</entry>'
+   end
+   
+   def auth_token
+     unless @auth_token
+       http = Net::HTTP.new("www.google.com", 443)
+       http.use_ssl = true
+       body = "Email=#{CGI::escape @user}&Passwd=#{CGI::escape @pass}&service=youtube&source=#{CGI::escape @client_id}"
+       response = http.post("/youtube/accounts/ClientLogin", body, "Content-Type" => "application/x-www-form-urlencoded")
+       raise UploadError, response.body[/Error=(.+)/,1] if response.code.to_i != 200
+       @auth_token = response.body[/Auth=(.+)/, 1]
+
+     end
+     @auth_token
+   end
+   
+   def boundary
+     "lLHkadpwqdh"
+   end
+   
+   def base_url #:nodoc:
+     "uploads.gdata.youtube.com"
+   end
+   
+end
+
+def print_subcommand_usage(subcommand_name)
+  case subcommand_name
+  when "publish2youtube"
+    print_version
+    Publish2YouTube.print_usage
+  end
+end
+
+def subcommand_with_name(subcommand_name)
+  case subcommand_name
+  when "publish2youtube"
+    subcommand = Publish2YouTube.new
+  end
+  return subcommand
+end
+
+def print_version
+  $stderr.puts "PcP Tools Version 0.1b"
+  $stderr.puts
+end
+
+def print_usage(subcommand_name=nil)
+
+  if !subcommand_name.nil?
+    print_subcommand_usage(subcommand_name)
+    return
+  end
+
+  print_version
+  $stderr.puts "usage: pcptools <subcommand> [options] [args]"
+  $stderr.puts "Type 'pcptools help <subcommand>' for help on a specific subcommand."
+  $stderr.puts
+  $stderr.puts "Available subcommands:"
+  $stderr.puts
+  $stderr.puts "publish2youtube"
+  $stderr.puts
+  $stderr.puts "By specifying '--no_fail' pcptools will ignore any failures and always exit with an exit code of 0."
+  $stderr.puts
+
+end
+
+if ARGV.length == 0
+  print_usage
+  exit
+end
+
+subcommand_name = ARGV.shift
+
+if ['--help', '-h', 'help'].include? subcommand_name
+  print_usage(ARGV.shift)
+  exit
+elsif ['--version', '-V'].include? subcommand_name
+  print_version
+  exit
+else
+  subcommand = subcommand_with_name(subcommand_name)
+end
+
+if subcommand.nil?
+  print_subcommand_usage(subcommand_name)
+  exit(-1)
+end
+
+opts = GetoptLong.new(
+     [ '--help', GetoptLong::NO_ARGUMENT ],
+     [ '--version', GetoptLong::NO_ARGUMENT],
+     [ '--basedir', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--input', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--dev_id', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--user', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--password', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--title', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--description', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--keywords', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--outfile', GetoptLong::REQUIRED_ARGUMENT],
+     [ '--category', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--autosplit', GetoptLong::NO_ARGUMENT]
+)
+
+$basedir = nil
+$input = nil
+$dev_id = nil
+$user = nil
+$password = nil
+$title = nil
+$description = nil
+$keywords = nil
+$category = nil
+$autosplit = false
+$outfile = nil
+arguments = Hash.new
+
+begin
+    opts.each do |opt, arg|
+      case opt
+    when '--help', '-h'
+      print_usage
+      exit 0
+    when '--version', '-v'
+      print_version
+      exit 0
+    when '--basedir'
+  		$basedir = arg
+  		arguments["basedir"] = $basedir
+    when '--input'
+  		$input = arg
+  		arguments["input"] = $input
+  	when '--dev_id'
+    	$dev_id = arg
+    	arguments["dev_id"] = $dev_id
+    when '--user'
+    	$user = arg
+    	arguments["user"] = $user
+  	when '--password'
+    	$password = arg
+    	arguments["password"] = $password
+    when '--title'
+      $title = arg
+      arguments["title"] = $title
+    when '--description'
+      $description = arg
+      arguments["description"] = $description
+    when '--keywords'
+      $keywords = arg
+      arguments["keywords"] = $keywords
+    when '--category'
+      $category = arg
+      arguments["category"] = $category
+    when '--autosplit'
+      $autosplit = true
+      arguments["autosplit"] = true
+    when '--outfile'
+      $outfile = arg
+      arguments["outfile"] = $outfile
+      else
+        $stderr.puts "unrecognized option `#{opt}'"
+      end
+    end
+  rescue GetoptLong::InvalidOption => boom
+  rescue GetoptLong::MissingArgument => boom
+  end
+  
+if($basedir == nil)
+  $stderr.puts "Error: --basedir missing"
+  exit(-1)
+end
+
+subcommand.run(arguments)
