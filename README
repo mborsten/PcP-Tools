@@ -1,0 +1,28 @@
+PcP Tools
+
+By Marcel Borsten, Impart IT
+
+Description:
+
+PcP Tools is a script to support additional functionality in your Podcast Producer Workflows. It aims
+to support functions that are not supported by the Mac OS X Snow Leopard build-in script 'pcastaction'.
+
+Features:
+
+At the moment PcP Tools supports uploading to Youtube and autosplit.
+
+Example:
+
+pcptools publish2youtube --basedir=<working directory> \
+--input=<input filename> \
+--dev_id=<your dev_id> \
+--user=<your youtube loginname> \
+--pass=<your youtube password> \
+--keywords=<keywords> \
+--category=<valid youtube category> \
+--title=<title> \
+--description=<description> \
+--autosplit \
+--outfile=</path to outfile>
+
+--autosplit and --outfile are optional
