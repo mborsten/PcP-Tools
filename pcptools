@@ -203,7 +203,7 @@ class Publish2YouTube
     
     part_duration = OSX::QTMakeTime(600 * time_scale, time_scale)
     temp_dir = Dir.tmpdir()
-    attributes = OSX::NSDictionary.dictionaryWithObjectsAndKeys("YES", "QTMovieFlatten", nil)
+    attributes = OSX::NSDictionary.dictionaryWithObjectsAndKeys(OSX::NSNumber.numberWithBool(true), "QTMovieFlatten", nil)
     movies = Array.new
     
     parts.times do |i|
@@ -217,8 +217,8 @@ class Publish2YouTube
       end
       
       temp_file_path = temp_dir + "/" + File.basename(file_path, File.extname(file_path)) + "-" + i.to_s + ".mov"
-        movie_part.writeToFile_withAttributes(temp_file_path, attributes)
-        movies.push(temp_file_path)
+      movie_part.writeToFile_withAttributes(temp_file_path, attributes)
+      movies.push(temp_file_path)
     end
     return movies    
   end
