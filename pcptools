@@ -23,6 +23,10 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+
+# If you are running this on a Mac OS X Server 10.6.x system (Which you probably are)
+# you should not have to install any of these gems
+
 require 'rubygems'
 require 'getoptlong'
 require 'yaml'
