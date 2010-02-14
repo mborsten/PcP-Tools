@@ -165,7 +165,8 @@ class Publish2YouTube
   end
   
   def upload_movie(file_path, arguments)
-      
+    
+    # Check if file exists before we try to upload it
     if(File.exists?(file_path) && !File.directory?(file_path))
         file = File.open(file_path)
     else
@@ -180,36 +181,51 @@ class Publish2YouTube
     url = YOUTUBE_BASE_URL + response
     uploaded_file = {:file => file_path, :url => url, :title => arguments["title"]}
   end
-    
+  
+  # This method checks wether the given movie should be split in parts
+  # to be able to uload to youtube.com. When the movie is longer than 10 minutes
+  # it gets split to temporary files. This methods returns an array with paths
+  # to the temporary files.
   def split_movie(file_path)
     OSX.require_framework("QTKit")
     splitted_files = Array.new
-    
-    movie, error = OSX::QTMovie.movieWithFile_error(file_path)
-    if(error != nil || movie == nil)
+    movie, error = OSX::QTMovie.movieWithFile_error(file_path)  # Load in the original movie
+    if(error != nil || movie == nil)                            # Check if we can load the movie
       $stderr.puts "Could not open #{file_path}, #{error.localizedDescription}"
       exit(-1)
     end
     
+    # a QTTime structure has a timeValue and timeScale we need
+    # to dived the timeValue by the timeScale to get the time
+    # in seconds. If we devide that by 60 we get the time in
+    # minutes
     time_scale = movie.duration.timeScale
     total_time = (movie.duration.timeValue / time_scale) / 60
     
+    # If the total time is below 10 minutes we don't have to
+    # split the movie
     if(total_time < 10)
       splitted_files.push(file_path)
       return splitted_files
     end
-       
+    
+    # If the totol time is above 10 minutes we have to calculate
+    # how many parts we need to make. No part can be over 10 minutes.
     parts = total_time.to_i / 10
     
     if(total_time.modulo(10) != 0)
       parts = parts + 1
     end
     
+    # Parts are always 10 minutes long (or shorter)
     part_duration = OSX::QTMakeTime(600 * time_scale, time_scale)
     temp_dir = Dir.tmpdir()
     attributes = OSX::NSDictionary.dictionaryWithObjectsAndKeys(OSX::NSNumber.numberWithBool(true), "QTMovieFlatten", nil)
     movies = Array.new
     
+    # For every part we extract the time selection out of the original movie
+    # and write it out to a new, temporary file. We store the paths to the
+    # temporary files
     parts.times do |i|
       begin_time = OSX::QTMakeTime(i * 600 * time_scale, time_scale)
       range = OSX::QTMakeTimeRange(begin_time, part_duration)
