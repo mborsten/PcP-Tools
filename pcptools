@@ -236,6 +236,7 @@ class Publish2YouTube
         exit(-1)
       end
       
+      # Writing out the temporary file and storing the path in the movies array
       temp_file_path = temp_dir + "/" + File.basename(file_path, File.extname(file_path)) + "-" + i.to_s + ".mov"
       movie_part.writeToFile_withAttributes(temp_file_path, attributes)
       movies.push(temp_file_path)
@@ -243,6 +244,9 @@ class Publish2YouTube
     return movies    
   end
   
+  # The Outfile is used in Podcast Producer to store info about the published movie.
+  # This way you can access publishing information later on in the workflow. For example
+  # to send a notification email.
   def write_outfile(outfile_path, files, date=nil)
     if outfile_path.empty?
        $stderr.puts "Error, empty outfile path"
