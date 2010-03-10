@@ -23,6 +23,10 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+
+# If you are running this on a Mac OS X Server 10.6.x system (Which you probably are)
+# you should not have to install any of these gems
+
 require 'rubygems'
 require 'getoptlong'
 require 'yaml'
@@ -37,6 +41,12 @@ require 'rexml/document'
 YOUTUBE_BASE_URL = "http://www.youtube.com/watch?v="
 
 class Publish2YouTube
+
+  class Error < UploadError
+  end
+  
+  class Error < AuthenticationError
+  end
 
   def self.print_usage
       $stderr.puts " "
@@ -161,7 +171,8 @@ class Publish2YouTube
   end
   
   def upload_movie(file_path, arguments)
-      
+    
+    # Check if file exists before we try to upload it
     if(File.exists?(file_path) && !File.directory?(file_path))
         file = File.open(file_path)
     else
@@ -176,36 +187,51 @@ class Publish2YouTube
     url = YOUTUBE_BASE_URL + response
     uploaded_file = {:file => file_path, :url => url, :title => arguments["title"]}
   end
-    
+  
+  # This method checks wether the given movie should be split in parts
+  # to be able to uload to youtube.com. When the movie is longer than 10 minutes
+  # it gets split to temporary files. This methods returns an array with paths
+  # to the temporary files.
   def split_movie(file_path)
     OSX.require_framework("QTKit")
     splitted_files = Array.new
-    
-    movie, error = OSX::QTMovie.movieWithFile_error(file_path)
-    if(error != nil || movie == nil)
+    movie, error = OSX::QTMovie.movieWithFile_error(file_path)  # Load in the original movie
+    if(error != nil || movie == nil)                            # Check if we can load the movie
       $stderr.puts "Could not open #{file_path}, #{error.localizedDescription}"
       exit(-1)
     end
     
+    # a QTTime structure has a timeValue and timeScale we need
+    # to dived the timeValue by the timeScale to get the time
+    # in seconds. If we devide that by 60 we get the time in
+    # minutes
     time_scale = movie.duration.timeScale
     total_time = (movie.duration.timeValue / time_scale) / 60
     
+    # If the total time is below 10 minutes we don't have to
+    # split the movie
     if(total_time < 10)
       splitted_files.push(file_path)
       return splitted_files
     end
-       
+    
+    # If the totol time is above 10 minutes we have to calculate
+    # how many parts we need to make. No part can be over 10 minutes.
     parts = total_time.to_i / 10
     
     if(total_time.modulo(10) != 0)
       parts = parts + 1
     end
     
+    # Parts are always 10 minutes long (or shorter)
     part_duration = OSX::QTMakeTime(600 * time_scale, time_scale)
     temp_dir = Dir.tmpdir()
     attributes = OSX::NSDictionary.dictionaryWithObjectsAndKeys(OSX::NSNumber.numberWithBool(true), "QTMovieFlatten", nil)
     movies = Array.new
     
+    # For every part we extract the time selection out of the original movie
+    # and write it out to a new, temporary file. We store the paths to the
+    # temporary files
     parts.times do |i|
       begin_time = OSX::QTMakeTime(i * 600 * time_scale, time_scale)
       range = OSX::QTMakeTimeRange(begin_time, part_duration)
@@ -216,6 +242,7 @@ class Publish2YouTube
         exit(-1)
       end
       
+      # Writing out the temporary file and storing the path in the movies array
       temp_file_path = temp_dir + "/" + File.basename(file_path, File.extname(file_path)) + "-" + i.to_s + ".mov"
       movie_part.writeToFile_withAttributes(temp_file_path, attributes)
       movies.push(temp_file_path)
@@ -223,6 +250,9 @@ class Publish2YouTube
     return movies    
   end
   
+  # The Outfile is used in Podcast Producer to store info about the published movie.
+  # This way you can access publishing information later on in the workflow. For example
+  # to send a notification email.
   def write_outfile(outfile_path, files, date=nil)
     if outfile_path.empty?
        $stderr.puts "Error, empty outfile path"
@@ -352,6 +382,7 @@ class Publish2YouTube
    end
    
 end
+#### End of class
 
 def print_subcommand_usage(subcommand_name)
   case subcommand_name
