@@ -177,7 +177,7 @@ class Publish2YouTube
     @pass = $password
     @dev_key = $dev_id
     @client_id = "pcptools"
-    response = upload(file, :title => arguments["upload_title"], :description => arguments["description"], :keywords => arguments["keywords"], :category => arguments["category"])
+    response = upload(file, :title => arguments["title"], :description => arguments["description"], :keywords => arguments["keywords"], :category => arguments["category"])
     url = YOUTUBE_BASE_URL + response
     uploaded_file = {:file => file_path, :url => url, :title => arguments["title"]}
   end
@@ -311,7 +311,8 @@ class Publish2YouTube
      Net::HTTP.start(base_url) do |upload|
        response = upload.post('/feeds/api/users/' << @user << '/uploads', uploadBody, uploadHeader)
        if response.code.to_i == 403
-         raise Exception, response.body[/<TITLE>(.+)<\/TITLE>/, 1]
+        puts response.body[/<TITLE>(.+)<\/TITLE>/, 1]
+        raise Exception, "http error code 403"
        elsif response.code.to_i != 201
          upload_error = ''
          xml = REXML::Document.new(response.body)
