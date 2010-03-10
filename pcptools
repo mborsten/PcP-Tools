@@ -287,7 +287,7 @@ class Publish2YouTube
      Net::HTTP.start(base_url) do |upload|
        response = upload.post('/feeds/api/users/' << @user << '/uploads', uploadBody, uploadHeader)
        if response.code.to_i == 403
-         raise AuthenticationError, response.body[/<TITLE>(.+)<\/TITLE>/, 1]
+         raise Exception, response.body[/<TITLE>(.+)<\/TITLE>/, 1]
        elsif response.code.to_i != 201
          upload_error = ''
          xml = REXML::Document.new(response.body)
@@ -297,7 +297,7 @@ class Publish2YouTube
            code = error.elements["code"].text
            upload_error << sprintf("%s: %s\r\n", location, code)
          end
-         raise UploadError, upload_error
+         raise Exception, upload_error
        end
        xml = REXML::Document.new(response.body)
        return xml.elements["//id"].text[/videos\/(.+)/, 1]
