@@ -42,12 +42,6 @@ YOUTUBE_BASE_URL = "http://www.youtube.com/watch?v="
 
 class Publish2YouTube
 
-  class Error < UploadError
-  end
-  
-  class Error < AuthenticationError
-  end
-
   def self.print_usage
       $stderr.puts " "
       $stderr.puts "pcptools publish2youtube --basedir=BASEDIR --input=INPUT MOVIE --dev_id=YOUTUBE_DEVELOPER_ID --user=YOUTUBE_USERNAME"
