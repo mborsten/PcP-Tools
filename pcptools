@@ -37,8 +37,140 @@ require 'net/http'
 require 'net/https'
 require 'cgi'
 require 'rexml/document'
+require 'aws/s3'
 
 YOUTUBE_BASE_URL = "http://www.youtube.com/watch?v="
+
+class Publish2S3
+  
+  def self.print_usage
+    $stderr.puts " "
+    $stderr.puts "pcptools pblish2s3 --basedir=BASEDIR --input=INPUT MOVIE --access_key ACCESS KEY --secret_key SECRET KEY"
+    $stderr.puts "                   --destination_filename DESTINATION FILENAME --outfile OUTFILE --bucket BUCKET NAME"
+    $stderr.puts ""
+  end
+  
+  def run(arguments)
+    
+    basedir = arguments["basedir"]
+    input = arguments["input"]
+    access_key = arguments["access_key"]
+    secret_key = arguments["secret_key"]
+    destination_filename = arguments["destination_filename"]
+    outfile = arguments["outfile"]
+    bucket = arguments["bucket"]
+    
+    if (basedir == nil)
+      $stderr.puts "Error --basedir missing"
+      self.print_usage
+      exit(-1)
+    end
+    
+    if input.nil?
+      $stderr.puts "Error --input missing"
+      Publish2S3.print_usage
+      exit(-1)
+    end
+    
+    if access_key.nil?
+      $stderr.puts "Error --access_key missing"
+      Publish2S3.print_usage
+      exit(-1)
+    end
+    
+    if secret_key.nil?
+      $stderr.puts "Error --secret_key missing"
+      Publish2S3.print_usage
+      exit(-1)
+    end
+    
+    if destination_filename.nil?
+      $stderr.puts "Error --destination_filename missing"
+      Publish2S3.print_usage
+      exit(-1)
+    end
+    
+    if bucket.nil?
+      $stderr.puts "Error --bucket missing"
+      Publish2S3.print_usage
+      exit(-1)
+    end
+    
+    AWS::S3::Base.establish_connection!(
+    :access_key_id => access_key,
+    :secret_access_key => secret_key
+    )
+    
+    result = AWS::S3::Bucket.find(bucket)
+    
+    if result.nil?
+      $stderr.puts "Error --bucket missing"
+      exit(-1)
+    end
+    
+    input_file_path = basedir + "/" + input
+    
+    if(!File.exists?(input_file_path) || File.directory?(input_file_path))
+      $stderr.puts "Error: input file does not exist"
+      exit(-1)
+    end
+    
+    upload_result = AWS::S3::S3Object.store(
+    destination_filename,
+    open(input_file_path),
+    bucket,
+    :access => :public_read
+    )
+    
+    if upload_result.success? == false
+      $stderr.puts "Error: could not upload to s3"
+      exit(-1)
+    end
+    
+    if(!outfile.nil?)
+      # outfile argument was given, so we are going to generate an
+      # yaml outfile
+      
+      outfile_path = basedir + "/" + outfile
+      
+      self.write_outfile(outfile_path, input_file_path, arguments)
+      
+    end
+    
+  end
+  
+  def write_outfile(outfile_path, file, arguments)
+     if outfile_path.empty?
+        $stderr.puts "Error, empty outfile path"
+        exit(-1)
+      elsif !File.writable?(File.dirname(outfile_path))
+        $stderr.puts "Error, could not write outfile. Folder not writeable"
+        exit(-1)
+      elsif file.nil?
+        $stderr.puts "No files given for outfile"
+        exit(-1)
+      else
+        OSX.require_framework("QTKit")
+        date = Time.now
+        movie = OSX::QTMovie.movieWithFile_error(file)
+        width = %x[/usr/libexec/podcastproducer/qtinfo #{file} width].strip
+        height = %x[/usr/libexec/podcastproducer/qtinfo #{file} height].strip
+        duration = %x[/usr/libexec/podcastproducer/qtinfo #{file} duration].strip
+        size = %x[/usr/libexec/podcastproducer/qtinfo #{file} size].strip
+        url = "http://#{arguments['bucket']}.s3.amazonaws.com/#{arguments['destination_filename']}"
+        publish_file = {
+           :url => url,
+           :width => width,
+           :height => height,
+           :duration => duration,
+           :date => date
+         }
+      File.open(outfile_path, "w") do |writefile|
+        writefile.puts publish_file.to_yaml
+      end
+    end
+  end
+end
 
 class Publish2YouTube
 
@@ -391,6 +523,8 @@ def subcommand_with_name(subcommand_name)
   case subcommand_name
   when "publish2youtube"
     subcommand = Publish2YouTube.new
+  when "publish2s3"
+    subcommand = Publish2S3.new
   end
   return subcommand
 end
@@ -414,6 +548,7 @@ def print_usage(subcommand_name=nil)
   $stderr.puts "Available subcommands:"
   $stderr.puts
   $stderr.puts "publish2youtube"
+  $stderr.puts "publish2s3"
   $stderr.puts
   $stderr.puts "By specifying '--no_fail' pcptools will ignore any failures and always exit with an exit code of 0."
   $stderr.puts
@@ -455,6 +590,10 @@ opts = GetoptLong.new(
      [ '--keywords', GetoptLong::REQUIRED_ARGUMENT ],
      [ '--outfile', GetoptLong::REQUIRED_ARGUMENT],
      [ '--category', GetoptLong::REQUIRED_ARGUMENT ],
+     [ '--access_key', GetoptLong::REQUIRED_ARGUMENT],
+     [ '--secret_key', GetoptLong::REQUIRED_ARGUMENT],
+     [ '--destination_filename', GetoptLong::REQUIRED_ARGUMENT],
+     [ '--bucket', GetoptLong::REQUIRED_ARGUMENT],
      [ '--autosplit', GetoptLong::NO_ARGUMENT]
 )
 
@@ -510,12 +649,20 @@ begin
     when '--autosplit'
       $autosplit = true
       arguments["autosplit"] = true
+    when '--access_key'
+      arguments["access_key"] = arg
+    when '--secret_key'
+      arguments["secret_key"] = arg
+    when '--destination_filename'
+      arguments["destination_filename"] = arg
+    when '--bucket'
+      arguments["bucket"] = arg
     when '--outfile'
       $outfile = arg
       arguments["outfile"] = $outfile
       else
         $stderr.puts "unrecognized option `#{opt}'"
-      end
+      end      
     end
   rescue GetoptLong::InvalidOption => boom
   rescue GetoptLong::MissingArgument => boom
