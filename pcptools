@@ -158,12 +158,21 @@ class Publish2S3
         duration = %x[/usr/libexec/podcastproducer/qtinfo #{file} duration].strip
         size = %x[/usr/libexec/podcastproducer/qtinfo #{file} size].strip
         url = "http://#{arguments['bucket']}.s3.amazonaws.com/#{arguments['destination_filename']}"
+        frame_rate =  %x[/usr/libexec/podcastproducer/qtinfo #{file} frameRate].strip
+        mimetype =  %x[/usr/libexec/podcastproducer/qtinfo #{file} mimeType].strip
+        video_codec =  %x[/usr/libexec/podcastproducer/qtinfo #{file} videoCodec].strip
+        audio_codec =  %x[/usr/libexec/podcastproducer/qtinfo #{file} audioCodec].strip
+        
         publish_file = {
            :url => url,
            :width => width,
            :height => height,
            :duration => duration,
-           :date => date
+           :date => date,
+           :frameRate => frame_rate,
+           :mimeType => mimetype,
+           :videoCodec => video_codec,
+           :audioCodec => audio_codec
          }
       File.open(outfile_path, "w") do |writefile|
         writefile.puts publish_file.to_yaml
